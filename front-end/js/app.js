@@ -2,24 +2,34 @@ const { createApp, ref, computed, onMounted } = Vue;
 
 const App = {
     setup() {
-        const API_URL = '/computerstore/customers';
+        // Endpoints
+        const API_URL_ALL = '/computerstore/customers';
+        const API_URL_SINGLE = '/computerstore/customer';
         
+        // General State
         const customers = ref([]);
         const isLoading = ref(true);
 
+        // Search State (Real-time filter)
+        const searchQuery = ref('');
+
+        // API ID Search State (Specific Endpoint)
+        const targetId = ref('');
+        const isSearching = ref(false);
+        const singleSearchResult = ref(null);
+        const searchError = ref('');
+
+        // Helper: Extract amount safely
         const extractAmount = (customerRecord) => {
-            if (customerRecord.moneySpent !== undefined && customerRecord.moneySpent !== null) {
-                return Number(customerRecord.moneySpent);
-            }
-            if (customerRecord.totalSale !== undefined && customerRecord.totalSale !== null) {
-                return Number(customerRecord.totalSale);
-            }
+            if (customerRecord.moneySpent !== undefined && customerRecord.moneySpent !== null) return Number(customerRecord.moneySpent);
+            if (customerRecord.totalSale !== undefined && customerRecord.totalSale !== null) return Number(customerRecord.totalSale);
             return null;
         };
 
+        // Fetch All Customers
         const fetchCustomers = async () => {
             try {
-                const response = await fetch(API_URL);
+                const response = await fetch(API_URL_ALL);
                 const data = await response.json();
                 customers.value = data;
             } catch (error) {
@@ -29,6 +39,38 @@ const App = {
             }
         };
 
+        // Fetch Single Customer by ID (Consuming the required endpoint)
+        const fetchCustomerById = async () => {
+            if (!targetId.value) return;
+            
+            isSearching.value = true;
+            searchError.value = '';
+            singleSearchResult.value = null;
+
+            try {
+                const response = await fetch(`${API_URL_SINGLE}/${targetId.value}`);
+                
+                if (!response.ok) {
+                    if (response.status === 404) throw new Error(`Customer with ID ${targetId.value} not found.`);
+                    throw new Error("Internal Server Error.");
+                }
+                
+                const data = await response.json();
+                singleSearchResult.value = data;
+            } catch (error) {
+                searchError.value = error.message;
+            } finally {
+                isSearching.value = false;
+            }
+        };
+
+        const clearSearch = () => {
+            singleSearchResult.value = null;
+            searchError.value = '';
+            targetId.value = '';
+        };
+
+        // Compute total revenue
         const totalRevenue = computed(() => {
             return customers.value.reduce((accumulator, currentCustomer) => {
                 const amount = extractAmount(currentCustomer);
@@ -36,13 +78,11 @@ const App = {
             }, 0);
         });
 
+        // Process base data
         const processedCustomers = computed(() => {
             const idCounts = {};
-            
             customers.value.forEach(customer => {
-                if (customer.id) {
-                    idCounts[customer.id] = (idCounts[customer.id] || 0) + 1;
-                }
+                if (customer.id) idCounts[customer.id] = (idCounts[customer.id] || 0) + 1;
             });
 
             return customers.value.map(customer => {
@@ -64,6 +104,18 @@ const App = {
             });
         });
 
+        // LIVE FILTER: Filter the processed array based on user typing
+        const filteredCustomers = computed(() => {
+            if (!searchQuery.value) return processedCustomers.value;
+            
+            const lowerCaseQuery = searchQuery.value.toLowerCase();
+            return processedCustomers.value.filter(customer => {
+                const matchName = customer.displayFullName && customer.displayFullName.toLowerCase().includes(lowerCaseQuery);
+                const matchId = customer.id && customer.id.toString().includes(lowerCaseQuery);
+                return matchName || matchId;
+            });
+        });
+
         const formatCurrency = (value) => {
             return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         };
@@ -80,7 +132,6 @@ const App = {
             return 'bg-cyan-500 opacity-50';
         };
 
-        // Lifecycle Hooks
         onMounted(() => {
             fetchCustomers();
         });
@@ -89,7 +140,14 @@ const App = {
             customers,
             isLoading,
             totalRevenue,
-            processedCustomers,
+            filteredCustomers,
+            searchQuery,
+            targetId,
+            isSearching,
+            singleSearchResult,
+            searchError,
+            fetchCustomerById,
+            clearSearch,
             formatCurrency,
             getStatusColor,
             getStatusDot
